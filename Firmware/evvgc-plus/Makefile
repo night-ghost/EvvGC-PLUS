@@ -3,9 +3,34 @@
 # NOTE: Can be overridden externally.
 #
 
+
+WARNFLAGS       =   -Wall -Wshadow -Wpointer-arith -Wcast-align -Wno-psabi -Wno-unused-parameter -Wno-error=cast-align -Wno-error=unused-but-set-variable
+WARNFLAGS      +=   -Wwrite-strings -Wformat=2 -Wshadow -Wfloat-equal -Wpointer-arith -Wlogical-op -Wmissing-declarations -Wpacked -Wno-pragmas 
+WARNFLAGS      +=   -Wextra -Wlogical-op  -Wno-unknown-pragmas -Wno-redundant-decls -Wno-packed -Wno-error=double-promotion -Wno-error=type-limits
+WARNFLAGS      +=   -Wno-error=unused-variable -Wno-error=reorder -Wno-error=float-equal -Wno-error=unused-parameter -Wno-missing-field-initializers
+WARNFLAGS      +=   -Wno-error=pmf-conversions -Wno-error=missing-declarations -Wno-error=unused-function -Werror=format-security -Werror=array-bounds
+WARNFLAGS      +=   -Wno-error=unused-label -Wno-trigraphs
+
+OPTFLAGS       += -fsingle-precision-constant -g3 -fno-strict-aliasing  -fomit-frame-pointer -frename-registers
+#-fno-strength-reduce
+OPTFLAGS       += -fno-builtin-printf -fno-aggressive-loop-optimizations -fpredictive-commoning
+#OPTFLAGS       += -fassociative-math
+# -freciprocal-math -ffast-math - cause EKF errors
+OPTFLAGS       += -fno-signed-zeros -fno-trapping-math 
+OPTFLAGS       += -finline-functions-called-once -fearly-inlining -finline-small-functions
+OPTFLAGS       += -fmerge-all-constants 
+
+WARNFLAGSCXX    =   -Wno-reorder
+
+OPTFLAGSCPP     =  -fno-exceptions -fno-threadsafe-statics # not true C++
+OPTFLAGSCPP    += -fconserve-space -fno-enforce-eh-specs  -fno-use-cxa-atexit
+OPTFLAGSCPP    += -std=gnu++11 -fpermissive
+
+
 # Compiler options here.
 ifeq ($(USE_OPT),)
-  USE_OPT = -O2 -ggdb -fomit-frame-pointer -falign-functions=16
+  USE_OPT = -O2 -ggdb -fomit-frame-pointer  $(WARNFLAGS) $(OPTFLAGS)
+#  -falign-functions=16
 endif
 
 # C specific options here (added to USE_OPT).
@@ -15,7 +40,7 @@ endif
 
 # C++ specific options here (added to USE_OPT).
 ifeq ($(USE_CPPOPT),)
-  USE_CPPOPT = -fno-rtti
+  USE_CPPOPT = -fno-rtti $(WARNFLAGSCXX)
 endif
 
 # Enable this if you want the linker to remove unused code and data
@@ -43,6 +68,12 @@ ifeq ($(USE_VERBOSE_COMPILE),)
   USE_VERBOSE_COMPILE = no
 endif
 
+# If enabled, this option makes the build process faster by not compiling
+# modules not used in the current configuration.
+ifeq ($(USE_SMART_BUILD),)
+  USE_SMART_BUILD = yes
+endif
+
 #
 # Build global options
 ##############################################################################
@@ -50,6 +81,23 @@ endif
 ##############################################################################
 # Architecture or project specific options
 #
+
+# Stack size to be allocated to the Cortex-M process stack. This stack is
+# the stack used by the main() thread.
+ifeq ($(USE_PROCESS_STACKSIZE),)
+  USE_PROCESS_STACKSIZE = 0x400
+endif
+
+# Stack size to the allocated to the Cortex-M main/exceptions stack. This
+# stack is used for processing interrupts and exceptions.
+ifeq ($(USE_EXCEPTIONS_STACKSIZE),)
+  USE_EXCEPTIONS_STACKSIZE = 0x400
+endif
+
+# Enables the use of FPU on Cortex-M4 (no, softfp, hard).
+ifeq ($(USE_FPU),)
+  USE_FPU = no
+endif
 
 #
 # Architecture or project specific options
@@ -59,41 +107,59 @@ endif
 # Project, sources and paths
 #
 
+SRCROOT  :=    $(realpath $(dir $(firstword $(MAKEFILE_LIST))))
+
 # Define project name here
 PROJECT = evvgc_plus
-
+CHIBIOS = $(SRCROOT)/ChibiOS_16.1.5
+#CHIBIOS = PROJECT/ChibiOS_16.1.5
+CHIBIOS_CONTRIB = $(CHIBIOS)/community
+#BOARD = drivers/EVVGC_V1_X
+BOARD = drivers/STORM32_V1_X
 # Imported source files and paths
-SRCDIR = ..
-include $(SRCDIR)/boards/EVVGC_V1.X/board.mk
-include $(SRCDIR)/chibios_2.6.x/hal/platforms/STM32F1xx/platform.mk
-include $(SRCDIR)/chibios_2.6.x/hal/hal.mk
-include $(SRCDIR)/chibios_2.6.x/ports/GCC/ARMCMx/STM32F1xx/port.mk
-include $(SRCDIR)/chibios_2.6.x/kernel/kernel.mk
+
+# MSz ok this works but USB problem
+include $(CHIBIOS)/os/common/ports/ARMCMx/compilers/GCC/mk/startup_stm32f1xx.mk
+include $(CHIBIOS_CONTRIB)/os/hal/hal.mk
+include $(CHIBIOS_CONTRIB)/os/hal/ports/STM32/STM32F1xx/platform.mk
+include $(BOARD)/board.mk
+include $(CHIBIOS)/os/hal/osal/rt/osal.mk
+include $(CHIBIOS)/os/rt/rt.mk
+include $(CHIBIOS)/os/rt/ports/ARMCMx/compilers/GCC/mk/port_v7m.mk
+include $(CHIBIOS)/test/rt/test.mk
+
 
 # Define linker script file here
 ifeq ($(USE_USB_BL),yes)
-  LDSCRIPT= $(PORTLD)/STM32F103xC_BL.ld
+  LDSCRIPT= $(STARTUPLD)/STM32F103xC_BL.ld
   USE_OPT += -DUSE_USB_BL
 else
-  LDSCRIPT= $(PORTLD)/STM32F103xC.ld
+  LDSCRIPT= STM32F103xC.ld
 endif
 
 # C sources that can be compiled in ARM or THUMB mode depending on the global
 # setting.
-CSRC = $(PORTSRC) \
+CSRC = $(STARTUPSRC) \
        $(KERNSRC) \
-       $(TESTSRC) \
+       $(PORTSRC) \
+       $(OSALSRC) \
        $(HALSRC) \
        $(PLATFORMSRC) \
        $(BOARDSRC) \
+       $(TESTSRC) \
+       $(SHELLSRC) \
+       $(CHIBIOS)/os/various/shell.c \
+       $(CHIBIOS)/os/hal/lib/streams/memstreams.c \
+       $(CHIBIOS)/os/hal/lib/streams/chprintf.c \
+       flash/flash.c \
        attitude.c \
-       eeprom.c \
        main.c \
        misc.c \
        mpu6050.c \
-       pwmio.c \
        telemetry.c \
-       usbcfg.c
+       usbcfg.c \
+       mavlink_handler.c \
+       storage.c
 
 # C++ sources that can be compiled in ARM or THUMB mode depending on the global
 # setting.
@@ -120,11 +186,17 @@ TCSRC =
 TCPPSRC =
 
 # List ASM source files here
-ASMSRC = $(PORTASM)
+ASMSRC = $(STARTUPASM) $(PORTASM) $(OSALASM)
 
-INCDIR = $(PORTINC) $(KERNINC) $(TESTINC) \
-         $(HALINC) $(PLATFORMINC) $(BOARDINC)
+INCDIR = $(STARTUPINC) $(KERNINC) $(PORTINC) $(OSALINC) \
+         $(HALINC) $(PLATFORMINC) $(BOARDINC) $(TESTINC) \
+         $(CHIBIOS)/os/hal/lib/streams $(CHIBIOS)/os/various  mavlink/common 
+         
+         
 
+
+#$(CHIBIOS)/os/common/ports/ARMCMx/devices/STM32F1xx          
+         
 #
 # Project, sources and paths
 ##############################################################################
@@ -195,7 +267,8 @@ DLIBS =
 #
 
 # List all user C define here, like -D_DEBUG=1
-UDEFS =
+#MSz dodaje to
+UDEFS = -DCHPRINTF_USE_FLOAT=TRUE
 
 # Define ASM defines here
 UADEFS =
@@ -213,7 +286,7 @@ ULIBS = -lm
 # End of user defines
 ##############################################################################
 
-RULESPATH = $(SRCDIR)/chibios_2.6.x/ports/GCC/ARMCMx
+RULESPATH = $(CHIBIOS)/os/common/ports/ARMCMx/compilers/GCC
 include $(RULESPATH)/rules.mk
 
 program: $(BUILDDIR)/$(PROJECT).bin
@@ -222,3 +295,4 @@ program: $(BUILDDIR)/$(PROJECT).bin
 	echo -n -e "\\xbd\\x58\\x08\\x00\\xe3\\x06\\x6d\\x9e" > /dev/ttyACM0;
 	sleep 1
 	dfu-util --alt 1  --download $(BUILDDIR)/$(PROJECT).bin -R
+
